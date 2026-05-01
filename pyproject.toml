@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qwen3-asr-toolkit"
+version = "1.0.4"
+description = "Python toolkit for the Qwen3-ASR API—parallel high‑throughput calls, robust long‑audio transcription, multi‑sample‑rate support."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    { name = "He Wang", email = "hwang2001@mail.nwpu.edu.cn" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "dashscope",
+    "librosa",
+    "soundfile",
+    "silero_vad",
+    "pydub",
+    "tqdm",
+    "numpy",
+    "srt",
+    "openai",
+    "requests",
+    "onnxruntime>=1.20.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/QwenLM/Qwen3-ASR-Toolkit"
+
+[project.scripts]
+qwen3-asr = "qwen3_asr_toolkit.call_api:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
