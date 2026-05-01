@@ -46,7 +46,7 @@ Follow these steps to set up and run the project on your local machine.
     -   **Ubuntu/Debian**: `sudo apt update && sudo apt install ffmpeg`
     -   **macOS**: `brew install ffmpeg`
     -   **Windows**: Download from the [official FFmpeg website](https://ffmpeg.org/download.html) and add it to your system's PATH.
--   **DashScope API Key**: You need an API key from Alibaba Cloud's DashScope.
+-   **DashScope API Key** *(only required for DashScope mode)*: You need an API key from Alibaba Cloud's DashScope. **Not required if you are using a self-hosted local endpoint** (see [Self-Hosted / Local vLLM](#-self-hosted--local-vllm)).
     -   You can obtain one from the [DashScope Console](https://dashscope.console.aliyun.com/apiKey). If you are calling the API services of Tongyi Qwen for the first time, you can follow the tutorial on [this website](https://help.aliyun.com/zh/model-studio/first-api-call-to-qwen) to create your own API Key.
     -   For better security and convenience, it is **highly recommended** to set your API key as an environment variable named `DASHSCOPE_API_KEY`. The script will automatically use it, and you won't need to pass the `--api-key` argument in the command.
 
@@ -101,21 +101,23 @@ Once installed, you can use the `qwen3-asr` command directly from your terminal.
 ### Command
 
 ```bash
-qwen3-asr -i <input_file_or_url> [-key <api_key>] [-j <num_threads>] [-c <context>] [-d <duration>] [-t <tmp_dir>] [--save-srt] [-s]
+qwen3-asr -i <input_file_or_url> [-key <api_key>] [-u <base_url>] [-m <model>] [-j <num_threads>] [-c <context>] [-d <duration>] [-t <tmp_dir>] [--save-srt] [-s]
 ```
 
 ### Arguments
 
-| Argument                  | Short  | Description                                                                          | Required/Optional                        |
-| ------------------------- | ------ | ------------------------------------------------------------------------------------ | ---------------------------------------- |
-| `--input-file`            | `-i`   | Path to the local media file or a remote URL (http/https) to transcribe.             | **Required**                             |
-| `--context`               | `-c`   | Text context to guide the ASR model, improving recognition of specific terms.        | Optional, Default: `""`                  |
-| `--dashscope-api-key`     | `-key` | Your DashScope API Key.                                                              | Optional (if `DASHSCOPE_API_KEY` is set) |
-| `--num-threads`           | `-j`   | The number of concurrent threads to use for API calls.                               | Optional, **Default: 4**                 |
-| `--vad-segment-threshold` | `-d`   | Target duration in seconds for each VAD-split audio chunk.                           | Optional, **Default: 120**               |
-| `--tmp-dir`               | `-t`   | Path to a directory for storing temporary chunk files.                               | Optional, Default: `~/qwen3-asr-cache`   |
-| `--save-srt`              | `-srt` | Generate and save a timestamped SRT subtitle file in addition to the `.txt` file.    | Optional                                 |
-| `--silence`               | `-s`   | Silence mode. Suppresses detailed progress and chunking information on the terminal. | Optional                                 |
+| Argument                  | Short  | Description                                                                          | Required/Optional                                  |
+| ------------------------- | ------ | ------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `--input-file`            | `-i`   | Path to the local media file or a remote URL (http/https) to transcribe.             | **Required**                                       |
+| `--context`               | `-c`   | Text context to guide the ASR model, improving recognition of specific terms.        | Optional, Default: `""`                            |
+| `--dashscope-api-key`     | `-key` | Your DashScope API Key.                                                              | Optional (if `DASHSCOPE_API_KEY` is set or using `-u`) |
+| `--base-url`              | `-u`   | Base URL of a self-hosted vLLM endpoint. Skips DashScope entirely.                  | Optional                                           |
+| `--model`                 | `-m`   | Model name to use. Defaults to `qwen3-asr-flash` (DashScope) or `Qwen/Qwen3-ASR-0.6B` (local). | Optional                              |
+| `--num-threads`           | `-j`   | The number of concurrent threads to use for API calls.                               | Optional, **Default: 4**                           |
+| `--vad-segment-threshold` | `-d`   | Target duration in seconds for each VAD-split audio chunk.                           | Optional, **Default: 120**                         |
+| `--tmp-dir`               | `-t`   | Path to a directory for storing temporary chunk files.                               | Optional, Default: `~/qwen3-asr-cache`             |
+| `--save-srt`              | `-srt` | Generate and save a timestamped SRT subtitle file in addition to the `.txt` file.    | Optional                                           |
+| `--silence`               | `-s`   | Silence mode. Suppresses detailed progress and chunking information on the terminal. | Optional                                           |
 
 ### Output
 
@@ -171,13 +173,62 @@ qwen3-asr -i "/path/to/my/tech_talk.mp4" -c "Qwen-ASR, DashScope, FFmpeg" -d 60 
 ```
 *This command will try to split the audio into chunks around 60 seconds long, which can result in more granular subtitles.*
 
-#### 6. Run in Silence Mode
+#### 6. Use a Self-Hosted Local vLLM Endpoint
+
+Transcribe without a DashScope API key by pointing to your local vLLM server.
+
+```bash
+qwen3-asr -i "/path/to/audio.mp4" -u http://localhost:8000/v1
+```
+
+#### 7. Run in Silence Mode
 
 Use the `-s` or `--silence` flag to prevent progress details from being printed to the terminal. The final transcript will still be saved to a file.
 
 ```bash
 qwen3-asr -i "/path/to/my/meeting_recording.m4a" -s
 ```
+
+## 🖥️ Self-Hosted / Local vLLM
+
+You can run Qwen3-ASR entirely locally using a [vLLM](https://github.com/vllm-project/vllm) backend. This mode requires **no DashScope API key**.
+
+### 1. Install and start the backend
+
+Install Qwen3-ASR following the instructions at [QwenLM/Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR), then start the server:
+
+```bash
+# Default: serves Qwen/Qwen3-ASR-0.6B on port 8000
+./start-backend.sh
+
+# Or specify a different model or port
+MODEL=Qwen/Qwen3-ASR-1.7B PORT=8080 ./start-backend.sh
+```
+
+This starts an OpenAI-compatible HTTP API at `http://localhost:8000/v1`.
+
+### 2. Transcribe using the local endpoint
+
+Pass your server's base URL with `-u`. No API key is needed.
+
+```bash
+# Use default model name (Qwen/Qwen3-ASR-0.6B)
+qwen3-asr -i "/path/to/audio.mp4" -u http://localhost:8000/v1
+
+# Explicitly specify the model name served by your vLLM instance
+qwen3-asr -i "/path/to/audio.mp4" -u http://localhost:8000/v1 -m Qwen/Qwen3-ASR-1.7B
+
+# All other flags (threads, SRT, context, etc.) work the same
+qwen3-asr -i "/path/to/audio.mp4" -u http://localhost:8000/v1 -j 2 -srt
+```
+
+### Notes
+
+- The `-u` / `--base-url` flag takes precedence over DashScope. When it is set, the `DASHSCOPE_API_KEY` environment variable and `-key` argument are ignored entirely.
+- Language detection (`Detected Language`) will report `Not Supported` in local mode because the vLLM backend does not return DashScope's language annotation metadata.
+- Audio larger than 10 MB is automatically converted to MP3 before being sent, same as in DashScope mode.
+
+---
 
 ## 🌍 Implementations in Other Languages
 

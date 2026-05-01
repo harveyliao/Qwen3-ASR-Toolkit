@@ -1,4 +1,5 @@
 dashscope
+openai
 librosa
 pydub
 silero_vad

@@ -5,6 +5,8 @@ import requests
 import dashscope
 import concurrent.futures
 
+from pydub import AudioSegment
+
 from tqdm import tqdm
 from datetime import timedelta
 from collections import Counter
@@ -20,7 +22,9 @@ def parse_args():
     )
     parser.add_argument("--input-file", '-i', type=str, required=True, help="Input media file path")
     parser.add_argument("--context", '-c', type=str, default="", help="Any text context content for Qwen3-ASR-Flash")
-    parser.add_argument("--dashscope-api-key", '-key', type=str, help="DashScope API key")
+    parser.add_argument("--dashscope-api-key", '-key', type=str, help="DashScope API key (not required when using --base-url)")
+    parser.add_argument("--base-url", '-u', type=str, help="Base URL of self-hosted vLLM endpoint (e.g. http://localhost:8000/v1)")
+    parser.add_argument("--model", '-m', type=str, help="Model name (default: qwen3-asr-flash for DashScope, or the model name served by your local vLLM)")
     parser.add_argument("--num-threads", '-j', type=int, default=4, help="Number of threads to use for parallel calls")
     parser.add_argument("--vad-segment-threshold", '-d', type=int, default=120, help="Segment threshold seconds for VAD")
     parser.add_argument("--tmp-dir", '-t', type=str, default=os.path.join(os.path.expanduser("~"), "qwen3-asr-cache"), help="Temp directory path")
@@ -34,6 +38,7 @@ def main():
     input_file = args.input_file
     context = args.context
     dashscope_api_key = args.dashscope_api_key
+    base_url = args.base_url
     num_threads = args.num_threads
     vad_segment_threshold = args.vad_segment_threshold
     tmp_dir = args.tmp_dir
@@ -51,12 +56,16 @@ def main():
     elif not os.path.exists(input_file):
         raise FileNotFoundError(f"Input file \"{input_file}\" does not exist!")
 
-    if dashscope_api_key:
-        dashscope.api_key = dashscope_api_key
+    if base_url:
+        model = args.model or "Qwen/Qwen3-ASR-0.6B"
+        qwen3asr = QwenASR(model=model, base_url=base_url)
     else:
-        assert "DASHSCOPE_API_KEY" in os.environ, f"Please set DASHSCOPE_API_KEY as an environment variable, or specify it with '-key' argument"
-
-    qwen3asr = QwenASR(model="qwen3-asr-flash")
+        if dashscope_api_key:
+            dashscope.api_key = dashscope_api_key
+        else:
+            assert "DASHSCOPE_API_KEY" in os.environ, "Please set DASHSCOPE_API_KEY as an environment variable, or specify it with '-key' argument"
+        model = args.model or "qwen3-asr-flash"
+        qwen3asr = QwenASR(model=model)
 
     wav = load_audio(input_file)
     if not silence:
@@ -82,6 +91,11 @@ def main():
     for idx, (_, _, wav_data) in enumerate(wav_list):
         wav_path = os.path.join(save_dir, f"{wav_name}_{idx}.wav")
         save_audio_file(wav_data, wav_path)
+        if os.path.getsize(wav_path) > 10 * 1024 * 1024:
+            mp3_path = os.path.splitext(wav_path)[0] + ".mp3"
+            AudioSegment.from_file(wav_path).export(mp3_path, format="mp3")
+            os.remove(wav_path)
+            wav_path = mp3_path
         wav_path_list.append(wav_path)
 
     # Multithread call qwen3-asr-flash api

@@ -3,6 +3,8 @@ import time
 import random
 import dashscope
 
+import httpx
+from openai import OpenAI
 from pydub import AudioSegment
 
 
@@ -26,8 +28,15 @@ language_code_mapping = {
 
 
 class QwenASR:
-    def __init__(self, model: str = "qwen3-asr-flash"):
+    def __init__(self, model: str = "qwen3-asr-flash", base_url: str = None):
         self.model = model
+        self.base_url = base_url
+        if base_url:
+            self._client = OpenAI(
+                base_url=base_url,
+                api_key="EMPTY",
+                timeout=httpx.Timeout(timeout=3600.0, connect=10.0),
+            )
 
     def post_text_process(self, text, threshold=20):
         def fix_char_repeats(s, thresh):
@@ -96,37 +105,76 @@ class QwenASR:
         text = fix_char_repeats(text, threshold)
         return fix_pattern_repeats(text, threshold)
 
-    def asr(self, wav_url: str, context: str = ""):
+    def _prepare_local_path(self, wav_url: str):
+        """Resolve a local file path, converting to mp3 if > 10MB. Returns local path."""
         if not wav_url.startswith("http"):
             assert os.path.exists(wav_url), f"{wav_url} not exists!"
             file_path = wav_url
-            file_size = os.path.getsize(file_path)
-
-            # file size > 10M
-            if file_size > 10 * 1024 * 1024:
-                # convert to mp3
+            if os.path.getsize(file_path) > 10 * 1024 * 1024:
                 mp3_path = os.path.splitext(file_path)[0] + ".mp3"
                 audio = AudioSegment.from_file(file_path)
                 audio.export(mp3_path, format="mp3")
-                wav_url = mp3_path
+                return mp3_path
+            return file_path
+        return None
 
-            wav_url = f"file://{wav_url}"
+    def asr(self, wav_url: str, context: str = ""):
+        if self.base_url:
+            return self._asr_local(wav_url, context)
+        return self._asr_dashscope(wav_url, context)
 
-        # Submit the ASR task
-        for _ in range(MAX_API_RETRY):
+    def _asr_local(self, wav_url: str, context: str = ""):
+        """Call self-hosted vLLM OpenAI-compatible endpoint."""
+        local_path = self._prepare_local_path(wav_url)
+
+        for attempt in range(MAX_API_RETRY):
+            try:
+                if local_path:
+                    with open(local_path, "rb") as f:
+                        response = self._client.audio.transcriptions.create(
+                            model=self.model,
+                            file=f,
+                            response_format="json",
+                            prompt=context or None,
+                        )
+                else:
+                    import urllib.request, tempfile, pathlib
+                    with urllib.request.urlopen(wav_url) as r:
+                        suffix = pathlib.Path(wav_url.split("?")[0]).suffix or ".wav"
+                        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                            tmp.write(r.read())
+                            tmp_path = tmp.name
+                    with open(tmp_path, "rb") as f:
+                        response = self._client.audio.transcriptions.create(
+                            model=self.model,
+                            file=f,
+                            response_format="json",
+                            prompt=context or None,
+                        )
+                    os.unlink(tmp_path)
+                recog_text = response.text or ""
+                return "Not Supported", self.post_text_process(recog_text)
+            except Exception as e:
+                print(f"Retry {attempt + 1}...  {wav_url}\n{e}")
+                time.sleep(random.uniform(*API_RETRY_SLEEP))
+        raise Exception(f"{wav_url} task failed after {MAX_API_RETRY} retries")
+
+    def _asr_dashscope(self, wav_url: str, context: str = ""):
+        """Call DashScope API."""
+        local_path = self._prepare_local_path(wav_url)
+        if local_path:
+            wav_url = f"file://{local_path}"
+
+        for attempt in range(MAX_API_RETRY):
             try:
                 messages = [
                     {
                         "role": "system",
-                        "content": [
-                            {"text": context},
-                        ]
+                        "content": [{"text": context}]
                     },
                     {
                         "role": "user",
-                        "content": [
-                            {"audio": wav_url},
-                        ]
+                        "content": [{"audio": wav_url}]
                     }
                 ]
                 response = dashscope.MultiModalConversation.call(
@@ -157,12 +205,12 @@ class QwenASR:
                 return language, self.post_text_process(recog_text)
             except Exception as e:
                 try:
-                    print(f"Retry {_ + 1}...  {wav_url}\n{response}")
+                    print(f"Retry {attempt + 1}...  {wav_url}\n{response}")
                     if response.code == "DataInspectionFailed":
                         print(f"DataInspectionFailed! Invalid input audio \"{wav_url}\"")
                         break
-                except Exception as e:
-                    print(f"Retry {_ + 1}...  {wav_url}\n{e}")
+                except Exception:
+                    print(f"Retry {attempt + 1}...  {wav_url}\n{e}")
             time.sleep(random.uniform(*API_RETRY_SLEEP))
         raise Exception(f"{wav_url} task failed!\n{response}")
 
